@@ -5,7 +5,7 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
-TIKTOK_PROFILE_URL = os.getenv("https://www.tiktok.com/@huskylovers007") # E.g., https://www.tiktok.com/@username
+TIKTOK_PROFILE_URL = os.getenv("TIKTOK_PROFILE_URL") # E.g., https://www.tiktok.com/@username
 
 # 1. DOWNLOAD TIKTOK & DE-DUPLICATE
 def fetch_video():
