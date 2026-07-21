@@ -219,7 +219,7 @@ def edit_video(script_text):
     voice_input = ffmpeg.input('voice.mp3', t=max_duration).filter('volume', 1.0)
 
     if music_files:
-        bg_music = ffmpeg.input(music_files[0], stream_loop=-1, t=max_duration).filter('volume', 0.10)
+        bg_music = ffmpeg.input(music_files[0], stream_loop=-1, t=max_duration).filter('volume', 0.05)
         # Mix 100% Voiceover + 10% Music together
         audio_mixed = ffmpeg.filter([voice_input, bg_music], 'amix', inputs=2)
     else:
