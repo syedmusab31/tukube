@@ -3,7 +3,9 @@ name: Run TikTok to YouTube Shorts Agent
 on:
   schedule:
     # Runs twice a day automatically
-    - cron: '20 1,18 * * *'
+    - cron: '0 6 * * *'   # 1. Subah 11:00 AM PKT (06:00 UTC)
+    - cron: '0 12 * * *'  # 2. Shaam 05:00 PM PKT (12:00 UTC)
+    - cron: '0 17 * * *'  # 3. Raat 10:00 PM PKT (17:00 UTC)
   workflow_dispatch:
 
 jobs:
