@@ -1,11 +1,11 @@
 import os, glob, sqlite3, ffmpeg
 from yt_dlp import YoutubeDL
-import google.generativeai as genai
+from groq import Groq
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
-TIKTOK_PROFILE_URL = os.getenv("TIKTOK_PROFILE_URL") # E.g., https://www.tiktok.com/@username
+TIKTOK_PROFILE_URL = os.getenv("TIKTOK_PROFILE_URL")
 
 # 1. DOWNLOAD TIKTOK & DE-DUPLICATE
 def fetch_video():
@@ -44,19 +44,45 @@ def edit_video():
         audio = ffmpeg.input(audio_track, t=max_duration)
         ffmpeg.output(video.video, audio.audio, 'final_short.mp4').run(overwrite_output=True)
     else:
-        # If no music found, strip audio entirely
+        # Strip audio if no custom track is provided
         ffmpeg.output(video.video, 'final_short.mp4', an=None).run(overwrite_output=True)
 
-# 3. GENERATE SEO METADATA
+# 3. GENERATE SEO METADATA USING GROQ API
 def generate_metadata(caption):
-    genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-    model = genai.GenerativeModel('gemini-2.5-flash')
+    # Initializes using GROQ_API_KEY environment variable
+    client = Groq(api_key=os.getenv("GROQ_API_KEY"))
     
-    prompt = f"Create catchy YouTube Shorts metadata for this video caption: '{caption}'. Output format:\nTITLE: <max 90 chars title>\nDESCRIPTION: <short description with #Shorts>"
-    response = model.generate_content(prompt).text
+    system_prompt = (
+        "You are an expert YouTube Shorts algorithm specialist. "
+        "Create viral, high-CTR titles and descriptions based on video captions."
+    )
+    user_prompt = f"""
+    Create YouTube Shorts metadata for this TikTok video caption: '{caption}'.
     
-    title = response.split("TITLE:")[1].split("DESCRIPTION:")[0].strip()[:95]
-    description = response.split("DESCRIPTION:")[1].strip()
+    Strict Rules:
+    1. Title must be catchy, engaging, under 90 characters, and include 1 emoji.
+    2. Description must be concise and end with relevant hashtags including #Shorts.
+    
+    Your output MUST follow this exact format:
+    TITLE: <your title here>
+    DESCRIPTION: <your description here>
+    """
+    
+    completion = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ],
+        temperature=0.7
+    )
+    
+    response_text = completion.choices[0].message.content
+    
+    # Parse title and description
+    title = response_text.split("TITLE:")[1].split("DESCRIPTION:")[0].strip()[:95]
+    description = response_text.split("DESCRIPTION:")[1].strip()
+    
     return title, description
 
 # 4. UPLOAD TO YOUTUBE
@@ -84,6 +110,8 @@ if __name__ == "__main__":
     if caption is not None:
         edit_video()
         title, description = generate_metadata(caption)
+        print(f"Generated Title: {title}")
+        print(f"Generated Description:\n{description}")
         upload_to_youtube(title, description)
     else:
         print("No new videos found to process.")
