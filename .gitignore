@@ -1,0 +1,31 @@
+# Virtual Environment
+.venv/
+venv/
+ENV/
+
+# Python Cache & Bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+CACHEDIR.TAG
+
+# Sensitive Credentials & API Keys (DO NOT COMMIT)
+client_secrets.json
+client_secret*.json
+*.json
+.env
+
+# Generated OAuth Tokens
+token.pickle
+token.json
+
+# Audio / Media Files
+music/
+*.mp3
+*.wav
+*.mp4
+
+# OS & Editor Files
+.DS_Store
+.vscode/
+.idea/

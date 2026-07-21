@@ -1,0 +1,42 @@
+name: Run TikTok to YouTube Shorts Agent
+
+on:
+  schedule:
+    # Runs automatically twice a day (12:40 AM & 6:00 PM UTC)
+    - cron: '40 0,18 * * *'
+  workflow_dispatch: # Button to test run manually inside GitHub
+
+jobs:
+  run-agent:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code Repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Restore SQLite Database Cache
+        uses: actions/cache@v3
+        with:
+          path: videos.db
+          key: videos-db-${{ github.run_id }}
+          restore-keys: |
+            videos-db-
+
+      - name: Install System FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install Python Dependencies
+        run: pip install -r requirements.txt
+
+      - name: Execute Automation Script
+        env:
+          TIKTOK_PROFILE_URL: ${{ secrets.TIKTOK_PROFILE_URL }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+        run: python app.py
