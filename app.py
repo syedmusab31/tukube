@@ -50,7 +50,7 @@ def edit_video():
 # 3. GENERATE SEO METADATA
 def generate_metadata(caption):
     genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-    model = genai.GenerativeModel('gemini-2.5-flash')
+    model = genai.GenerativeModel('gemini-3.1-pro-preview')
     
     prompt = f"Create catchy YouTube Shorts metadata for this video caption: '{caption}'. Output format:\nTITLE: <max 90 chars title>\nDESCRIPTION: <short description with #Shorts>"
     response = model.generate_content(prompt).text

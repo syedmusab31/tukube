@@ -3,7 +3,7 @@ name: Run TikTok to YouTube Shorts Agent
 on:
   schedule:
     # Runs automatically twice a day (12:45 AM & 6:00 PM UTC)
-    - cron: '45 0,18 * * *'
+    - cron: '10 1,18 * * *'
   workflow_dispatch: # Button to test run manually inside GitHub
 
 jobs:
