@@ -19,10 +19,11 @@ client_secret*.json
 token.pickle
 token.json
 
-# Audio / Media Files
-music/
-*.mp3
-*.wav
+# Allow music folder and audio files so GitHub can use them
+!music/
+!music/*.mp3
+
+# Ignore processed videos (so you don't commit downloaded MP4 files)
 *.mp4
 
 # OS & Editor Files
