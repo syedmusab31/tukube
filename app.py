@@ -118,6 +118,7 @@
 
 import os, glob, sqlite3, ffmpeg, asyncio
 from yt_dlp import YoutubeDL
+from yt_dlp.networking.impersonate import ImpersonateTarget
 from groq import Groq
 import edge_tts
 from google.oauth2.credentials import Credentials
@@ -131,22 +132,27 @@ TIKTOK_PROFILE_URL = os.getenv("TIKTOK_PROFILE_URL")
 VOICE_SPEAKER = "en-US-ChristopherNeural"  
 
 # 1. DOWNLOAD TIKTOK & DE-DUPLICATE
-# 1. DOWNLOAD TIKTOK & DE-DUPLICATE
 def fetch_video():
     conn = sqlite3.connect('videos.db')
     cursor = conn.cursor()
     cursor.execute("CREATE TABLE IF NOT EXISTS posted (id TEXT PRIMARY KEY)")
     
-    # Updated opts to bypass TikTok scraping blocks
-    ydl_opts = {
-        'extract_flat': True,
+    # Define a valid ImpersonateTarget object to avoid string parsing assertions
+    try:
+        impersonate_opt = ImpersonateTarget('chrome', '110', 'windows')
+    except Exception:
+        impersonate_opt = 'chrome:windows'
+
+    common_opts = {
         'quiet': True,
-        'impersonate': 'chrome',  # Uses curl_cffi to spoof a real browser TLS fingerprint
+        'impersonate': impersonate_opt,
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
             'Accept-Language': 'en-US,en;q=0.9',
         }
     }
+    
+    ydl_opts = {**common_opts, 'extract_flat': True}
     
     with YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(TIKTOK_PROFILE_URL, download=False)
@@ -154,13 +160,8 @@ def fetch_video():
             vid_id = entry['id']
             if not cursor.execute("SELECT 1 FROM posted WHERE id=?", (vid_id,)).fetchone():
                 print(f"Downloading new video ID: {vid_id}")
-                dl_opts = {
-                    'outtmpl': 'input.mp4',
-                    'impersonate': 'chrome',
-                    'http_headers': {
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-                    }
-                }
+                dl_opts = {**common_opts, 'outtmpl': 'input.mp4'}
+                
                 YoutubeDL(dl_opts).download([entry['url']])
                 
                 cursor.execute("INSERT INTO posted VALUES (?)", (vid_id,))
