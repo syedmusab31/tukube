@@ -10,11 +10,9 @@ from googleapiclient.http import MediaFileUpload
 TIKTOK_PROFILE_URL = os.getenv("TIKTOK_PROFILE_URL")
 
 # --- SETTINGS ---
-# Choices: 'en-US-ChristopherNeural' (Male), 'en-US-AvaNeural' (Female), 'en-US-EricNeural' (Male)
 VOICE_SPEAKER = "en-US-ChristopherNeural"  
 
-# 1. DOWNLOAD TIKTOK & DE-DUPLICATE
-# 1. DOWNLOAD TIKTOK & DE-DUPLICATE
+# 1. DOWNLOAD TIKTOK & DE-DUPLICATE (WITH PHOTO/AUDIO-ONLY FILTER)
 def fetch_video():
     conn = sqlite3.connect('videos.db')
     cursor = conn.cursor()
@@ -41,12 +39,13 @@ def fetch_video():
         for entry in info.get('entries', []):
             vid_id = entry['id']
             
-            # Skip if already processed
+            # Skip if already marked in DB
             if cursor.execute("SELECT 1 FROM posted WHERE id=?", (vid_id,)).fetchone():
                 continue
 
             print(f"Checking post ID: {vid_id}")
             
+            # Clean temporary file
             if os.path.exists('input.mp4'):
                 os.remove('input.mp4')
 
@@ -54,45 +53,46 @@ def fetch_video():
             
             try:
                 with YoutubeDL(dl_opts) as dl_ydl:
-                    meta = dl_ydl.extract_info(entry['url'], download=True)
+                    dl_ydl.extract_info(entry['url'], download=True)
                 
-                # Check if file exists
                 if not os.path.exists('input.mp4'):
-                    print(f"File not downloaded for ID {vid_id}. Marking DB and skipping.")
+                    print(f"File download failed for ID: {vid_id}. Marking in DB and skipping.")
                     cursor.execute("INSERT INTO posted VALUES (?)", (vid_id,))
                     conn.commit()
                     continue
 
-                # --- STRICT VIDEO STREAM CHECK ---
+                # Probe input.mp4 for valid VIDEO stream
                 probe = ffmpeg.probe('input.mp4')
                 video_streams = [s for s in probe.get('streams', []) if s.get('codec_type') == 'video']
                 
+                # If no video stream (e.g., photo post or audio-only), skip to next post
                 if not video_streams:
-                    print(f"Post {vid_id} has NO video stream (Photo post/Audio only). Skipping & updating DB.")
+                    print(f"Post ID {vid_id} is an image/slideshow (no video track). Adding to DB and moving to next...")
                     cursor.execute("INSERT INTO posted VALUES (?)", (vid_id,))
                     conn.commit()
                     if os.path.exists('input.mp4'):
                         os.remove('input.mp4')
-                    continue  # Jump to NEXT item in loop
+                    continue  # SKIP TO NEXT TIKTOK POST
 
             except Exception as e:
-                print(f"Error checking/downloading ID {vid_id}: {e}")
+                print(f"Error processing ID {vid_id}: {e}")
                 cursor.execute("INSERT INTO posted VALUES (?)", (vid_id,))
                 conn.commit()
-                continue
+                if os.path.exists('input.mp4'):
+                    os.remove('input.mp4')
+                continue  # SKIP TO NEXT TIKTOK POST
 
-            # Valid video stream found!
+            # Valid video stream found! Save DB & return
             cursor.execute("INSERT INTO posted VALUES (?)", (vid_id,))
             conn.commit()
-            print(f"Successfully downloaded valid video ID: {vid_id}")
+            print(f"Valid Video Found! Processing ID: {vid_id}")
             return entry.get('title', '')
             
     return None
+
 # 2. GENERATE SCRIPT ACCORDING TO VIDEO DURATION (GROQ)
 def generate_voice_script(caption, target_duration):
     client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-    
-    # Estimate words: Average speaking speed is ~2.5 words per second
     target_words = int(target_duration * 2.3)
     
     prompt = f"""
@@ -118,24 +118,21 @@ async def generate_tts_file(text, output_file="voice.mp3"):
     await communicate.save(output_file)
 
 # 4. EDIT VIDEO & MIX AUDIO (FFMPEG)
-# 4. EDIT VIDEO & MIX AUDIO (FFMPEG)
 def edit_video(script_text):
     probe = ffmpeg.probe('input.mp4')
     duration = float(probe['format']['duration'])
     max_duration = 58.0 if duration > 60 else duration
 
-    # A. Generate Voiceover File using Async loop
     asyncio.run(generate_tts_file(script_text, "voice.mp3"))
 
-    # Explicitly select the VIDEO stream of input.mp4
+    # Explicit stream selection
     input_file = ffmpeg.input('input.mp4', t=max_duration)
     
-    # B. Visual Transformation Filter Chain
-    video_processed = (
+    video = (
         input_file.video
         .crop('iw*0.03', 'ih*0.03', 'iw*0.94', 'ih*0.94')
         .filter('scale', 1080, 1920)
-        .filter('setpts', '0.98*PTS') # 1.02x Speed Ramp
+        .filter('setpts', '0.98*PTS')
         .filter('eq', contrast=1.04, brightness=0.01)
         .drawtext(
             text="Follow for daily updates",
@@ -149,7 +146,6 @@ def edit_video(script_text):
         )
     )
 
-    # C. Audio Mixing Setup
     music_files = glob.glob('music/*.mp3') + glob.glob('music/*.MP3')
     voice_input = ffmpeg.input('voice.mp3', t=max_duration).audio.filter('volume', 1.0)
 
@@ -159,8 +155,9 @@ def edit_video(script_text):
     else:
         audio_mixed = voice_input
 
-    # D. Render Final Output
-    ffmpeg.output(video_processed, audio_mixed, 'final_short.mp4', acodec='aac', vcodec='libx264').run(overwrite_output=True)
+    ffmpeg.output(video, audio_mixed, 'final_short.mp4', acodec='aac', vcodec='libx264').run(overwrite_output=True)
+
+# 5. GENERATE YOUTUBE SEO METADATA (GROQ)
 def generate_metadata(caption):
     client = Groq(api_key=os.getenv("GROQ_API_KEY"))
     
@@ -180,7 +177,6 @@ def generate_metadata(caption):
     title = res.split("TITLE:")[1].split("DESCRIPTION:")[0].strip()[:95]
     description = res.split("DESCRIPTION:")[1].strip()
     
-    # Add Disclaimer to Description
     disclaimer = "\n\n---\nDisclaimer: Educational & Entertainment commentary with original AI voiceover and custom editing under Fair Use."
     return title, description + disclaimer
 
@@ -207,7 +203,6 @@ def upload_to_youtube(title, description):
 if __name__ == "__main__":
     caption = fetch_video()
     if caption is not None:
-        # Get video duration to sync script word count
         probe = ffmpeg.probe('input.mp4')
         duration = float(probe['format']['duration'])
         max_duration = 58.0 if duration > 60 else duration
@@ -224,4 +219,4 @@ if __name__ == "__main__":
         print("4. Uploading to YouTube...")
         upload_to_youtube(title, description)
     else:
-        print("No new videos found to process.")
+        print("No new valid videos found to process.")
