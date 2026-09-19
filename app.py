@@ -14,6 +14,7 @@ TIKTOK_PROFILE_URL = os.getenv("TIKTOK_PROFILE_URL")
 VOICE_SPEAKER = "en-US-ChristopherNeural"  
 
 # 1. DOWNLOAD TIKTOK & DE-DUPLICATE
+# 1. DOWNLOAD TIKTOK & DE-DUPLICATE
 def fetch_video():
     conn = sqlite3.connect('videos.db')
     cursor = conn.cursor()
@@ -40,51 +41,53 @@ def fetch_video():
         for entry in info.get('entries', []):
             vid_id = entry['id']
             
-            # Skip if already processed/posted
+            # Skip if already processed
             if cursor.execute("SELECT 1 FROM posted WHERE id=?", (vid_id,)).fetchone():
                 continue
 
             print(f"Checking post ID: {vid_id}")
             
-            # Remove old input file if exists
             if os.path.exists('input.mp4'):
                 os.remove('input.mp4')
 
-            # Download single item
             dl_opts = {**common_opts, 'outtmpl': 'input.mp4'}
             
             try:
                 with YoutubeDL(dl_opts) as dl_ydl:
                     meta = dl_ydl.extract_info(entry['url'], download=True)
-                    
-                    # Check if post is an Image / Photo post
-                    is_image = (
-                        meta.get('_type') == 'image' or 
-                        meta.get('vcodec') == 'none' or 
-                        meta.get('ext') in ['jpg', 'png', 'jpeg', 'webp'] or
-                        not os.path.exists('input.mp4')
-                    )
+                
+                # Check if file exists
+                if not os.path.exists('input.mp4'):
+                    print(f"File not downloaded for ID {vid_id}. Marking DB and skipping.")
+                    cursor.execute("INSERT INTO posted VALUES (?)", (vid_id,))
+                    conn.commit()
+                    continue
 
-                    if is_image:
-                        print(f"Post {vid_id} is an image/slideshow. Skipping and marking as processed in DB.")
-                        cursor.execute("INSERT INTO posted VALUES (?)", (vid_id,))
-                        conn.commit()
-                        continue  # Move to the NEXT post in loop
+                # --- STRICT VIDEO STREAM CHECK ---
+                probe = ffmpeg.probe('input.mp4')
+                video_streams = [s for s in probe.get('streams', []) if s.get('codec_type') == 'video']
+                
+                if not video_streams:
+                    print(f"Post {vid_id} has NO video stream (Photo post/Audio only). Skipping & updating DB.")
+                    cursor.execute("INSERT INTO posted VALUES (?)", (vid_id,))
+                    conn.commit()
+                    if os.path.exists('input.mp4'):
+                        os.remove('input.mp4')
+                    continue  # Jump to NEXT item in loop
 
             except Exception as e:
-                print(f"Failed to download ID {vid_id} (likely photo post/error): {e}")
+                print(f"Error checking/downloading ID {vid_id}: {e}")
                 cursor.execute("INSERT INTO posted VALUES (?)", (vid_id,))
                 conn.commit()
-                continue  # Move to the NEXT post in loop
+                continue
 
-            # If it's a valid video and downloaded successfully
+            # Valid video stream found!
             cursor.execute("INSERT INTO posted VALUES (?)", (vid_id,))
             conn.commit()
-            print(f"Successfully fetched video ID: {vid_id}")
+            print(f"Successfully downloaded valid video ID: {vid_id}")
             return entry.get('title', '')
             
     return None
-
 # 2. GENERATE SCRIPT ACCORDING TO VIDEO DURATION (GROQ)
 def generate_voice_script(caption, target_duration):
     client = Groq(api_key=os.getenv("GROQ_API_KEY"))
@@ -115,6 +118,7 @@ async def generate_tts_file(text, output_file="voice.mp3"):
     await communicate.save(output_file)
 
 # 4. EDIT VIDEO & MIX AUDIO (FFMPEG)
+# 4. EDIT VIDEO & MIX AUDIO (FFMPEG)
 def edit_video(script_text):
     probe = ffmpeg.probe('input.mp4')
     duration = float(probe['format']['duration'])
@@ -123,15 +127,12 @@ def edit_video(script_text):
     # A. Generate Voiceover File using Async loop
     asyncio.run(generate_tts_file(script_text, "voice.mp3"))
 
+    # Explicitly select the VIDEO stream of input.mp4
+    input_file = ffmpeg.input('input.mp4', t=max_duration)
+    
     # B. Visual Transformation Filter Chain
-    # - 3% Crop
-    # - Scale back to 1080x1920
-    # - 1.02x Speed up
-    # - Contrast 1.04, Brightness 0.01
-    # - Draw Bottom Banner "Follow for daily updates"
-    video = (
-        ffmpeg
-        .input('input.mp4', t=max_duration)
+    video_processed = (
+        input_file.video
         .crop('iw*0.03', 'ih*0.03', 'iw*0.94', 'ih*0.94')
         .filter('scale', 1080, 1920)
         .filter('setpts', '0.98*PTS') # 1.02x Speed Ramp
@@ -148,21 +149,18 @@ def edit_video(script_text):
         )
     )
 
-    # C. Audio Mixing Setup (Voiceover 100% + Background Music 10%)
+    # C. Audio Mixing Setup
     music_files = glob.glob('music/*.mp3') + glob.glob('music/*.MP3')
-    voice_input = ffmpeg.input('voice.mp3', t=max_duration).filter('volume', 1.0)
+    voice_input = ffmpeg.input('voice.mp3', t=max_duration).audio.filter('volume', 1.0)
 
     if music_files:
-        bg_music = ffmpeg.input(music_files[0], stream_loop=-1, t=max_duration).filter('volume', 0.05)
-        # Mix 100% Voiceover + 10% Music together
+        bg_music = ffmpeg.input(music_files[0], stream_loop=-1, t=max_duration).audio.filter('volume', 0.05)
         audio_mixed = ffmpeg.filter([voice_input, bg_music], 'amix', inputs=2)
     else:
         audio_mixed = voice_input
 
     # D. Render Final Output
-    ffmpeg.output(video, audio_mixed, 'final_short.mp4', acodec='aac', vcodec='libx264').run(overwrite_output=True)
-
-# 5. GENERATE YOUTUBE SEO METADATA (GROQ)
+    ffmpeg.output(video_processed, audio_mixed, 'final_short.mp4', acodec='aac', vcodec='libx264').run(overwrite_output=True)
 def generate_metadata(caption):
     client = Groq(api_key=os.getenv("GROQ_API_KEY"))
     
